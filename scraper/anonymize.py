@@ -35,7 +35,13 @@ ADDRESS_RE = re.compile(
 )
 # Овгийн эхний үсэг + нэр: "Б.Батболд", "Б. Батболд", "Бат.Болд", "БА.Болд"
 INITIAL_NAME_RE = re.compile(
-    rf"(?<![{UPPER}{LOWER}.])(?P<initial>[{UPPER}](?:[{UPPER}]|[{LOWER}]{{1,3}})?)\.\s?(?P<name>[{UPPER}][{LOWER}]{{2,}})"
+    rf"(?<![{UPPER}{LOWER}.])(?P<initial>[{UPPER}](?:[{UPPER}]|[{LOWER}]{{1,3}})?)\.\s?(?P<name>[{UPPER}][{LOWER}]{{2,}}(?:-[{UPPER}]?[{LOWER}]+)?)"
+)
+
+OFFICIAL_RE = re.compile(
+    rf"(?i:шүүгч|шүүгчийн туслах|нарийн бичгийн дарга|прокурор|яллагч|яллагчаар|өмгөөлөгч|"
+    rf"шийдвэр гүйцэтгэгч|шинжээч)[{LOWER}]*\s*:?\s*"
+    rf"(?P<initial>[{UPPER}](?:[{UPPER}]|[{LOWER}]{{1,3}})?)\.\s?(?P<name>[{UPPER}][{LOWER}]{{2,}}(?:-[{UPPER}]?[{LOWER}]+)?)",
 )
 
 # Нэр шиг харагдах боловч нэр биш үгс (хуулийн товчлол, гарчиг)
@@ -59,8 +65,10 @@ class Anonymizer:
     def _keep(self, initial: str, name: str) -> bool:
         if name in NOT_NAMES:
             return True
+        # Тийн ялгалын нөхцөлтэй хэлбэрийг ч таних: "Э.Уянга" ~ "Э.Уянгад"
         for kept in self.keep_names:
-            if name in kept and (kept.startswith(initial) or initial[0] in kept.split(name)[0]):
+            ini, _, base = kept.partition(".")
+            if ini[:1] == initial[:1] and base and (name.startswith(base) or base.startswith(name)):
                 return True
         return False
 
@@ -79,6 +87,10 @@ class Anonymizer:
         sub("account", ACCOUNT_RE, "[ДАНС]")
         sub("phone", PHONE_RE, "[УТАС]")
         sub("address", ADDRESS_RE, "[ХАЯГ]")
+
+        # Албан тушаалтныг (шүүгч, прокурор, нарийн бичгийн дарга ...) нууцлахгүй
+        for m in OFFICIAL_RE.finditer(text):
+            self.keep_names.add(f"{m.group('initial')[0]}.{m.group('name')}")
 
         def person(m: re.Match) -> str:
             initial, name = m.group("initial"), m.group("name")

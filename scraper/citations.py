@@ -35,19 +35,22 @@ ABBREVIATIONS = {
 
 UPPER = "А-ЯӨҮЁ"
 LOWER = "а-яөүё"
+SUP = "⁰¹²³⁴⁵⁶⁷⁸⁹"
 
 # "...хуулийн" гэж төгссөн бүтэн нэр эсвэл "ЭХХШТХ-ийн" гэх товчлол
 LAW_WORD_RE = re.compile(rf"(?<![{UPPER}{LOWER}])хуул(?:ийн|иар|ьд)(?![{LOWER}])")
 ABBR_RE = re.compile(rf"(?<![{UPPER}{LOWER}])(?P<abbr>[{UPPER}]{{2,8}})\s?-?\s?(?:ийн|ын|ний|ий|д|т)(?![{LOWER}])")
 
 # Хуулийн нэрийн араас ирэх ишлэлийн гинж: тоо, "дүгээр зүйлийн", "1 дэх хэсэг", таслал, "болон"
-_NUM = r"\d+(?:\.\d+)*"
+_NUM = rf"\d+[{SUP}]*(?:\.\d+[{SUP}]*)*"
 _SUFFIX = rf"(?:\s?-\s?[{LOWER}]+)?"
-_WORD = rf"(?:дүгээр|дугаар|дэх|дахь|зүйл[{LOWER}]*|хэс[эг]г[{LOWER}]*|заалт[{LOWER}]*|болон|ба)"
+_WORD = rf"(?:дүгээр|дугаар|дэх|дахь|зүйл[{LOWER}]*|(?:хэсэг|хэсг)[{LOWER}]*|заалт[{LOWER}]*|болон|ба)"
+# "Эрүүгийн хуулийн тусгай ангийн 11.6 дугаар зүйл"
+PART_OF_CODE_RE = re.compile(r"\s*(?:ерөнхий|тусгай)\s+ангийн")
 CHAIN_RE = re.compile(rf"(?:\s*(?:{_NUM}{_SUFFIX}|{_WORD}(?![{LOWER}])|,))+")
 UNIT_RE = re.compile(
     rf"(?P<num>{_NUM}(?:{_SUFFIX})?(?:\s*,\s*{_NUM}(?:{_SUFFIX})?)*)"
-    rf"(?:\s+(?:дүгээр|дугаар|дэх|дахь)\s+(?P<what>зүйл|хэс[эг]г))?"
+    rf"(?:\s+(?:дүгээр|дугаар|дэх|дахь)\s+(?P<what>зүйл|хэсэг|хэсг|заалт))?"
 )
 
 MAX_NAME_WORDS = 10
@@ -93,19 +96,38 @@ def _parse_chain(law: str, chain: str) -> list[Citation]:
         if what is None:
             # Таслалаар жагсаасан дугаар бүр бие даасан ишлэл
             for num in nums:
-                if current is not None and current.article and num.startswith(current.article + ".") \
-                        and current.provision is None and current.part is None:
+                if current is not None and current.article and current.provision is None and (
+                        num.startswith(current.article + ".") or current.part is not None):
                     current.provision = num
                     current.text += " " + num
                 else:
                     current = Citation(law=law, provision=num, text=num)
                     out.append(current)
+        elif what == "заалт":
+            if current is not None and current.provision is None:
+                current.provision = nums[0]
+                current.text += " " + raw
+            else:
+                current = Citation(law=law, article=current.article if current else None,
+                                   part=current.part if current else None, provision=nums[0], text=raw)
+                out.append(current)
         elif what == "зүйл":
             for num in nums:
+                if current is not None and current.article and current.provision is None \
+                        and current.part is None and num.startswith(current.article + "."):
+                    # "123 дугаар зүйлийн 123.1, 75⁸ дугаар зүйл" -> 123.1 нь 123-ын заалт
+                    current.provision = num
+                    current.text += " " + num
+                    continue
                 current = Citation(law=law, article=num, text=raw)
                 out.append(current)
         else:  # хэсэг
             article = current.article if current is not None else None
+            if len(nums) == 1 and "." in nums[0] and current is not None and current.provision is None:
+                # "67 дугаар зүйлийн 67.1 дэх хэсэг" -> заалтын бүтэн дугаар
+                current.provision = nums[0]
+                current.text += " " + raw
+                continue
             for num in nums:
                 if current is not None and current.part is None and current.provision is None:
                     current.part = num
@@ -129,7 +151,11 @@ def extract_citations(text: str) -> list[Citation]:
         name = _law_name_before(text, m.start())
         if name is None:
             continue
-        chain = CHAIN_RE.match(text, m.end())
+        pos = m.end()
+        part = PART_OF_CODE_RE.match(text, pos)
+        if part:
+            pos = part.end()
+        chain = CHAIN_RE.match(text, pos)
         if not chain or not re.search(r"\d", chain.group()):
             continue
         law = _normalize_law(name[0] + " " + m.group())
