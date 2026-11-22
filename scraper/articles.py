@@ -4,17 +4,21 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field, asdict
 
-# "1 дүгээр зүйл", "2 дугаар зүйл", "12 дугаар зүйл", "3 дүгээр зүйл." гэх мэт
+# Нэмэгдсэн зүйл, заалтын дугаар дээд индекстэй байж болно: 32¹, 1¹.1
+SUP = "⁰¹²³⁴⁵⁶⁷⁸⁹"
+NUM = rf"\d+[{SUP}]*"
+
+# "1 дүгээр зүйл", "2 дугаар зүйл", "32¹ дүгээр зүйл." гэх мэт
 ARTICLE_RE = re.compile(
-    r"^\s*(?P<num>\d+(?:\s*/\d+)?)\s*(?:-?\s*(?:дүгээр|дугаар|дүгээр|ийн|ын))\s+зүйл\.?\s*(?P<title>.*)$",
+    rf"^\s*(?P<num>{NUM}(?:\s*/\d+)?)\s*(?:-?\s*(?:дүгээр|дугаар|ийн|ын))\s+зүйл\.?\s*(?P<title>.*)$",
     re.IGNORECASE,
 )
 CHAPTER_RE = re.compile(
     r"^\s*(?P<ord>[А-ЯӨҮЁа-яөүё]+|\d+)\s+(?:дүгээр|дугаар)?\s*бүлэг\s*$|^\s*[А-ЯӨҮЁ]+\s+БҮЛЭГ\s*$",
     re.IGNORECASE,
 )
-# "1.1.", "12.3.4." гэх мэт заалт
-CLAUSE_RE = re.compile(r"^\s*(?P<num>\d+(?:\.\d+)+)\.?\s*(?P<text>[^\d\s].*)$")
+# "1.1.", "12.3.4.", "1¹.1." гэх мэт заалт
+CLAUSE_RE = re.compile(rf"^\s*(?P<num>{NUM}(?:\.{NUM})+)\.?\s*(?P<text>[^\d\s{SUP}].*)$")
 
 
 @dataclass

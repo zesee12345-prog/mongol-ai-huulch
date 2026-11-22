@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import time
 from pathlib import Path
 
@@ -49,15 +50,58 @@ def law_url(law_id: str) -> str:
     return f"{BASE}/mn/detail?lawId={law_id}"
 
 
+SUPERSCRIPT = str.maketrans("0123456789", "⁰¹²³⁴⁵⁶⁷⁸⁹")
+JUNK_SELECTORS = [".print-zuil", ".icon-s"]
+
+
+def _content_root(soup: BeautifulSoup):
+    """Хуулийн үндсэн текстийн хэсгийг сонгоно (хажуугийн гарчиг, англи табыг алгасна)."""
+    tab = soup.find(id="bordered-tab1")
+    if tab is not None:
+        inner = tab.select_one(".maincontenter") or tab.select_one(".law_content")
+        if inner is not None:
+            return inner
+        return tab
+    return (
+        soup.select_one(".maincontenter")
+        or soup.find("main")
+        or soup.find(id="content")
+        or soup.body
+        or soup
+    )
+
+
+def _is_hidden(tag) -> bool:
+    style = (tag.get("style") or "").replace(" ", "").lower()
+    return "display:none" in style
+
+
 def extract_text(html: str) -> tuple[str, str]:
-    """HTML-ээс гарчиг ба хуулийн цэвэр текстийг гаргана."""
+    """HTML-ээс гарчиг ба хуулийн цэвэр текстийг гаргана (нэг <p> = нэг мөр)."""
     soup = BeautifulSoup(html, "html.parser")
-    for tag in soup(["script", "style", "nav", "header", "footer", "noscript"]):
+    title = (soup.title.string or "").strip() if soup.title and soup.title.string else ""
+    for tag in soup(["script", "style", "noscript"]):
         tag.decompose()
-    title = (soup.title.string or "").strip() if soup.title else ""
-    main = soup.find("main") or soup.find(id="content") or soup.body or soup
-    text = main.get_text("\n")
-    lines = [l.strip() for l in text.splitlines()]
+    root = _content_root(soup)
+    for sel in JUNK_SELECTORS:
+        for tag in root.select(sel):
+            tag.decompose()
+    for tag in root.find_all(True):
+        if not tag.decomposed and _is_hidden(tag):
+            tag.decompose()
+    # Нэмэгдсэн зүйлийн дугаар: 32<sup>1</sup> -> 32¹
+    for sup in root.find_all("sup"):
+        sup.replace_with(sup.get_text().strip().translate(SUPERSCRIPT))
+
+    lines: list[str] = []
+    paragraphs = [p for p in root.find_all("p") if p.find("p") is None]
+    if paragraphs:
+        for p in paragraphs:
+            line = re.sub(r"\s+", " ", p.get_text("")).strip()
+            if line:
+                lines.append(line)
+    else:
+        lines = [re.sub(r"\s+", " ", l).strip() for l in root.get_text("\n").splitlines()]
     return title, "\n".join(l for l in lines if l)
 
 
